@@ -212,13 +212,19 @@ The internal noisy DAC amplifier is completely stopped, and pristine, jitter-fre
 git clone git@github.com:anton-b/M5Stack_ESP32_radio.git
 cd M5Stack_ESP32_radio
 
-# Build firmware
-pio run
+# Build for M5Stack Basic / Core (default, lightweight build):
+pio run -e m5stack-core
 
-# Upload to M5Stack (port is automatically detected)
-pio run -t upload
+# Build for M5Stack Core2 (8 MB PSRAM, capacitive touch, Bluetooth streaming):
+pio run -e m5stack-core2
 
-# Open serial monitor
+# Build standalone Bluetooth sine wave generator test (no Wi-Fi):
+pio run -e test-bt-sine
+
+# Upload to M5Stack (port is automatically detected):
+pio run -e m5stack-core -t upload
+
+# Open serial monitor:
 pio device monitor -b 115200
 ```
 
@@ -235,9 +241,10 @@ usbipd attach --wsl --busid <BUSID>
 ## Project Structure
 
 ```
-├── platformio.ini              # PlatformIO configuration & library dependencies
+├── platformio.ini              # Multi-target build configuration (Basic, Core2, BT Test)
 ├── src/
 │   ├── main.cpp                # Core application, UI, state machine & buttons
+│   ├── i18n.h                  # Bilingual localization (Russian / English)
 │   ├── stations.h              # Radio station URLs, names & genres
 │   ├── AudioOutputM5Speaker.h  # Zero-copy audio driver for M5.Speaker
 │   ├── AudioOutputBT.h         # Ring-buffer audio output with 44.1 kHz resampling
@@ -246,6 +253,8 @@ usbipd attach --wsl --busid <BUSID>
 │       ├── font11.h            # 11pt regular (menu items, genres, inputs)
 │       ├── font16b.h           # 16pt bold (headings, titles, track name)
 │       └── font22b.h           # 22pt bold (station callsigns, branding)
+├── test_bt/
+│   └── main.cpp                # Standalone Bluetooth A2DP sine test (no Wi-Fi)
 ├── images/                     # Screenshots for documentation
 └── tools/
     ├── uicontrol.py            # Serial CLI & remote screenshot capture utility
