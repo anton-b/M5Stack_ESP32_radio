@@ -1,3 +1,5 @@
+#include "i18n.h"
+int currentLang = 0;
 #ifndef HAS_BLUETOOTH
 #define HAS_BLUETOOTH 0
 #endif
@@ -131,7 +133,7 @@ static const char* KB_LAYOUT[3][4] = {
 // Меню
 static int menuSel = 0;
 static const char* MENU_ITEMS[] = {"Станции", "Выход звука", "Wi-Fi и пароль", "Информация", "Назад"};
-static const int MENU_COUNT = 5;
+static const int MENU_COUNT = 6;
 static int outSel = 0;
 static const char* OUT_ITEMS[] = {"Динамик", "Bluetooth", "I2S DAC", "Назад"};
 static const int OUT_COUNT = 4;
@@ -631,6 +633,8 @@ static void loadPrefs() {
   wifiPass   = prefs.getString("pass", "");
   volume     = prefs.getInt("vol", 180);
   outMode    = prefs.getInt("out", 0);
+  currentLang = prefs.getInt("lang", 0);
+  if (currentLang < 0 || currentLang >= LANG_COUNT) currentLang = 0;
   stationSel = prefs.getInt("st", 0);
   if (stationSel < 0 || stationSel >= STATION_COUNT) stationSel = 0;
   if (volume < 0) volume = 0;
@@ -719,7 +723,7 @@ static void drawTopBar() {
   if (conn) {
     drawWifiBars(218, 20, WiFi.RSSI(), C_ACCENT);
   } else {
-    text("OFFLINE", 150, 6, C_RED, F_SM);
+    text(TR("НЕТ СЕТИ", "OFFLINE"), 150, 6, C_RED, F_SM);
   }
 
   // Громкость
@@ -744,7 +748,7 @@ static void drawNowPlaying() {
   if (st == radio::Buffering) {
     L->setFont(F_MD);
     L->setTextColor(C_ACCENT);
-    L->drawString("подключение", 14, 142);
+    L->drawString(TR("подключение", "connecting"), 14, 142);
     char b[24];
     snprintf(b, sizeof(b), "%u%%", (unsigned)(radio::fill() / 10));
     L->setTextColor(C_DIM);
@@ -755,19 +759,19 @@ static void drawNowPlaying() {
   else if (st == radio::Failed) {
     L->setFont(F_MD);
     L->setTextColor(C_RED);
-    L->drawString("нет потока", 14, 142);
-    text("B — повторить", 296, 148, C_DIM, F_SM, textdatum_t::top_right);
+    L->drawString(TR("нет потока", "stream error"), 14, 142);
+    text(TR("B повтор", "B retry"), 296, 148, C_DIM, F_SM, textdatum_t::top_right);
   }
   else if (st == radio::Stopped) {
     L->setFont(F_MD);
     L->setTextColor(C_DIM);
-    L->drawString("стоп", 14, 142);
-    text("B — играть", 296, 148, C_DIM, F_SM, textdatum_t::top_right);
+    L->drawString(TR("стоп", "stopped"), 14, 142);
+    text(TR("B играть", "B play"), 296, 148, C_DIM, F_SM, textdatum_t::top_right);
   }
   else {
     char title[192];
     radio::getTitle(title, sizeof(title));
-    if (!title[0]) strcpy(title, "прямой эфир");
+    if (!title[0]) strcpy(title, TR("прямой эфир", "live broadcast"));
 
     if (shownTitle != title) { shownTitle = title; titleScroll = 0; titleScrollAt = millis(); }
 
@@ -814,10 +818,10 @@ static void drawVu() {
 }
 
 static void drawHints() {
-  text("A/C — станция", 10, 204, C_DIM, F_SM);
-  text("B — плей/стоп", 135, 204, C_DIM, F_SM);
-  text("держ. B — меню", 10, 220, C_DIM, F_SM);
-  text("держ. A/C — звук", 160, 220, C_DIM, F_SM);
+  text(TR("A/C станция", "A/C station"), 10, 204, C_DIM, F_SM);
+  text(TR("B плей/стоп", "B play/stop"), 135, 204, C_DIM, F_SM);
+  text(TR("держ. B меню", "hold B menu"), 10, 220, C_DIM, F_SM);
+  text(TR("держ. A/C звук", "hold A/C vol"), 160, 220, C_DIM, F_SM);
 }
 
 static void drawPlayer() {
@@ -849,7 +853,7 @@ static void drawPlayer() {
 
   L->setFont(F_SM);
   L->setTextColor(C_PINK);
-  L->drawString("СЕЙЧАС ИГРАЕТ", 12, 124);
+  L->drawString(TR("СЕЙЧАС ИГРАЕТ", "NOW PLAYING"), 12, 124);
 
   drawNowPlaying();
   drawVu();
@@ -869,7 +873,7 @@ static void updatePlayerDyn() {
 static void drawStations() {
   L->fillScreen(C_BG);
   drawTopBar();
-  text("СТАНЦИИ", 12, 32, C_TEXT, F_LG);
+  text(TR("СТАНЦИИ", "STATIONS"), 12, 32, C_TEXT, F_LG);
   char b[16];
   snprintf(b, sizeof(b), "%d", STATION_COUNT);
   text(b, 308, 40, C_DIM, F_MD, textdatum_t::top_right);
@@ -897,9 +901,9 @@ static void drawStations() {
     text(name.c_str(), 42, y + 4, sel ? C_TEXT : C_DIM, F_MD);
   }
 
-  text("A/C выбор", 12, 218, C_DIM, F_SM);
-  text("B играть", 106, 218, C_DIM, F_SM);
-  text("держ. B назад", 195, 218, C_DIM, F_SM);
+  text(TR("A/C выбор", "A/C browse"), 12, 218, C_DIM, F_SM);
+  text(TR("B играть", "B play"), 106, 218, C_DIM, F_SM);
+  text(TR("держ. B назад", "hold B back"), 195, 218, C_DIM, F_SM);
 }
 
 // -----------------------------------------------------------------------------
@@ -908,30 +912,40 @@ static void drawStations() {
 static void drawMenu() {
   L->fillScreen(C_BG);
   drawTopBar();
-  text("МЕНЮ", 12, 32, C_TEXT, F_LG);
+  text(TR("МЕНЮ", "MENU"), 12, 30, C_TEXT, F_LG);
 
-  const char* modeNames[] = {"динамик", "Bluetooth", "I2S"};
+  const char* modeNames[] = { TR("динамик", "speaker"), "Bluetooth", "I2S" };
+  const char* items[MENU_COUNT] = {
+    TR("Станции", "Stations"),
+    TR("Выход звука", "Audio Output"),
+    TR("Язык", "Language"),
+    TR("Wi-Fi и пароль", "Wi-Fi & Pass"),
+    TR("Информация", "System Info"),
+    TR("Назад", "Back")
+  };
+
   for (int i = 0; i < MENU_COUNT; ++i) {
-    int y = 64 + i * 32;
+    int y = 58 + i * 26;
     bool sel = (i == menuSel);
     if (sel) {
-      L->fillRoundRect(8, y, 304, 28, 8, C_PANEL2);
-      L->fillRoundRect(8, y, 4, 28, 2, C_ACCENT);
+      L->fillRoundRect(8, y, 304, 24, 6, C_PANEL2);
+      L->fillRoundRect(8, y, 4, 24, 2, C_ACCENT);
     }
-    text(MENU_ITEMS[i], 26, y + 5, sel ? C_TEXT : C_DIM, F_MD);
-    if (i == 0) text("список радиостанций", 306, y + 9, C_LINE, F_SM, textdatum_t::top_right);
-    if (i == 1) text(modeNames[outMode], 306, y + 9, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
-    if (i == 2) {
-      String s = wifiSsid.length() ? wifiSsid : String("не настроено");
-      s = fitText(s.c_str(), 110, F_SM);
-      text(s.c_str(), 306, y + 9, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
+    text(items[i], 22, y + 4, sel ? C_TEXT : C_DIM, F_MD);
+    if (i == 0) text(TR("список станций", "station list"), 306, y + 6, C_LINE, F_SM, textdatum_t::top_right);
+    else if (i == 1) text(modeNames[outMode < 3 ? outMode : 0], 306, y + 6, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
+    else if (i == 2) text(currentLang == LANG_EN ? "English" : "Русский", 306, y + 6, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
+    else if (i == 3) {
+      String s = wifiSsid.length() ? wifiSsid : String(TR("не настроено", "not set"));
+      s = fitText(s.c_str(), 100, F_SM);
+      text(s.c_str(), 306, y + 6, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
     }
-    if (i == 3) text("IP и память", 306, y + 9, C_LINE, F_SM, textdatum_t::top_right);
+    else if (i == 4) text(TR("IP и память", "IP & heap"), 306, y + 6, C_LINE, F_SM, textdatum_t::top_right);
   }
 
-  text("A/C выбор", 12, 218, C_DIM, F_SM);
-  text("B открыть", 108, 218, C_DIM, F_SM);
-  text("держ. B назад", 195, 218, C_DIM, F_SM);
+  text(TR("A/C выбор", "A/C select"), 12, 218, C_DIM, F_SM);
+  text(TR("B открыть", "B open"), 108, 218, C_DIM, F_SM);
+  text(TR("держ. B назад", "hold B back"), 195, 218, C_DIM, F_SM);
 }
 
 // -----------------------------------------------------------------------------
@@ -940,7 +954,7 @@ static void drawMenu() {
 static void drawOutput() {
   L->fillScreen(C_BG);
   drawTopBar();
-  text("ВЫХОД ЗВУКА", 12, 32, C_TEXT, F_LG);
+  text(TR("ВЫХОД ЗВУКА", "AUDIO OUTPUT"), 12, 32, C_TEXT, F_LG);
 
   for (int i = 0; i < OUT_COUNT; ++i) {
     int y = 64 + i * 32;
@@ -950,12 +964,12 @@ static void drawOutput() {
       L->fillRoundRect(8, y, 4, 28, 2, C_ACCENT);
     }
     text(OUT_ITEMS[i], 26, y + 5, sel ? C_TEXT : C_DIM, F_MD);
-    if (i < 3 && outMode == i) text("текущий", 306, y + 9, C_ACCENT, F_SM, textdatum_t::top_right);
+    if (i < 3 && outMode == i) text(TR("текущий", "active"), 306, y + 9, C_ACCENT, F_SM, textdatum_t::top_right);
   }
 
-  text("A/C выбор", 12, 218, C_DIM, F_SM);
-  text("B выбор", 112, 218, C_DIM, F_SM);
-  text("держ. B назад", 200, 218, C_DIM, F_SM);
+  text(TR("A/C выбор", "A/C select"), 12, 218, C_DIM, F_SM);
+  text(TR("B выбор", "B select"), 112, 218, C_DIM, F_SM);
+  text(TR("держ. B назад", "hold B back"), 200, 218, C_DIM, F_SM);
 }
 
 // -----------------------------------------------------------------------------
@@ -973,11 +987,11 @@ static void drawBluetooth() {
   {
     const char* st;
     uint16_t stc = C_DIM;
-    if (btState == 3) { st = "подключено"; stc = C_GREEN; }
-    else if (btState == 2) { st = "подключение..."; stc = C_ACCENT; }
-    else if (btState == 1) { st = "поиск устройств..."; stc = C_ACCENT; }
-    else if (btState == 4) { st = "ошибка подключения"; stc = C_RED; }
-    else st = "не подключено";
+    if (btState == 3) { st = TR("подключено", "connected"); stc = C_GREEN; }
+    else if (btState == 2) { st = TR("подключение...", "connecting..."); stc = C_ACCENT; }
+    else if (btState == 1) { st = TR("поиск...", "discovering..."); stc = C_ACCENT; }
+    else if (btState == 4) { st = TR("ошибка", "failed"); stc = C_RED; }
+    else st = TR("не подключено", "disconnected");
     text(st, 12, 64, stc, F_MD);
     if (btName[0]) {
       String n = fitText(btName, 140, F_SM);
@@ -1001,7 +1015,7 @@ static void drawBluetooth() {
         L->fillRoundRect(8, y, 4, rowH - 3, 2, C_ACCENT);
       }
       if (i == btDevCount) {
-        text("Поиск устройств заново", 22, y + 4, sel ? C_ACCENT : C_DIM, F_MD);
+        text(TR(">> Поиск заново <<", ">> Search again <<"), 22, y + 4, sel ? C_ACCENT : C_DIM, F_MD);
       } else {
         String name = fitText(btDevs[i].name, 200, F_MD);
         text(name.c_str(), 22, y + 4, sel ? C_TEXT : C_DIM, F_MD);
@@ -1018,18 +1032,18 @@ static void drawBluetooth() {
   }
 #endif
 
-  text("Недоступно на этой плате", 12, 64, C_RED, F_MD);
-  text("Для работы Wi-Fi и Bluetooth", 12, 90, C_DIM, F_SM);
-  text("нужен ESP32 с PSRAM (Core2/Fire).", 12, 106, C_DIM, F_SM);
+  text(TR("Недоступно на этой плате", "Unavailable on this board"), 12, 64, C_RED, F_MD);
+  text(TR("Для работы Wi-Fi и Bluetooth", "Simultaneous Wi-Fi and BT"), 12, 90, C_DIM, F_SM);
+  text(TR("нужен ESP32 с PSRAM (Core2/Fire).", "requires PSRAM (Core2/Fire)."), 12, 106, C_DIM, F_SM);
 
-  text("На M5Stack Basic всего 320 КБ RAM:", 12, 128, C_TEXT, F_SM);
-  text("Wi-Fi оставляет ~60 КБ, а BT", 12, 144, C_TEXT, F_SM);
-  text("требует от 110 КБ (не хватает памяти).", 12, 160, C_TEXT, F_SM);
+  text(TR("На M5Stack Basic всего 320 КБ RAM:", "M5Stack Basic has only 320K RAM:"), 12, 128, C_TEXT, F_SM);
+  text(TR("Wi-Fi оставляет ~60 КБ, а BT", "Wi-Fi leaves ~60K, while BT"), 12, 144, C_TEXT, F_SM);
+  text(TR("требует от 110 КБ (не хватает памяти).", "needs >110K (out of memory)."), 12, 160, C_TEXT, F_SM);
 
-  text("Для чистого звука подключите", 12, 184, C_ACCENT, F_SM);
-  text("I2S DAC (MAX98357A) к шине.", 12, 200, C_ACCENT, F_SM);
+  text(TR("Для чистого звука подключите", "For pristine audio, connect an"), 12, 184, C_ACCENT, F_SM);
+  text(TR("I2S DAC (MAX98357A) к шине.", "I2S DAC (MAX98357A) to header."), 12, 200, C_ACCENT, F_SM);
 
-  text("B — назад", 12, 222, C_DIM, F_SM);
+  text(TR("B — назад", "B — back"), 12, 222, C_DIM, F_SM);
 }
 
 
@@ -1040,7 +1054,7 @@ static void drawBluetooth() {
 static void drawInfo() {
   L->fillScreen(C_BG);
   drawTopBar();
-  text("ИНФОРМАЦИЯ", 12, 32, C_TEXT, F_LG);
+  text(TR("ИНФОРМАЦИЯ", "SYSTEM INFO"), 12, 32, C_TEXT, F_LG);
 
   char b[64];
   int y = 72;
@@ -1050,22 +1064,22 @@ static void drawInfo() {
     y += 24;
   };
 
-  line("Wi-Fi", wifiSsid.length() ? wifiSsid : String("—"), C_TEXT);
+  line(TR("Wi-Fi", "Wi-Fi"), wifiSsid.length() ? wifiSsid : String("—"), C_TEXT);
   if (WiFi.status() == WL_CONNECTED) {
     snprintf(b, sizeof(b), "%d dBm", WiFi.RSSI());
-    line("Сигнал", b, WiFi.RSSI() > -70 ? C_GREEN : C_AMBER);
+    line(TR("Сигнал", "Signal"), b, WiFi.RSSI() > -70 ? C_GREEN : C_AMBER);
     line("IP", WiFi.localIP().toString(), C_TEXT);
   } else {
-    line("Сеть", "нет подключения", C_RED);
+    line(TR("Сеть", "Network"), TR("нет подключения", "not connected"), C_RED);
   }
   snprintf(b, sizeof(b), "%u КБ", (unsigned)(ESP.getFreeHeap() / 1024));
-  line("Свободно RAM", b, C_TEXT);
+  line(TR("Свободно RAM", "Free RAM"), b, C_TEXT);
   {
     const char* names[] = {"встроенный", "Bluetooth", "I2S DAC"};
-    line("Выход", names[outMode < 3 ? outMode : 0], C_TEXT);
+    line(TR("Выход", "Output"), names[outMode < 3 ? outMode : 0], C_TEXT);
   }
   snprintf(b, sizeof(b), "%d", STATION_COUNT);
-  line("Станций", b, C_TEXT);
+  line(TR("Станций", "Stations"), b, C_TEXT);
 
   text("B — назад", 12, 218, C_DIM, F_SM);
 }
@@ -1125,21 +1139,21 @@ static void buildNets() {
 static void drawWifiScan() {
   L->fillScreen(C_BG);
   drawTopBar();
-  text("WI-FI СЕТИ", 12, 32, C_TEXT, F_LG);
+  text(TR("WI-FI СЕТИ", "WI-FI NETWORKS"), 12, 32, C_TEXT, F_LG);
 
   if (scanning) {
     drawSpinner(298, 52, 10, C_ACCENT);
-    text("поиск сетей...", 12, 70, C_ACCENT, F_MD);
+    text(TR("поиск сетей...", "scanning..."), 12, 70, C_ACCENT, F_MD);
     text("удерж. B — назад", 12, 218, C_DIM, F_SM);
     return;
   }
   if (scanError) {
-    text("не удалось просканировать", 12, 74, C_RED, F_MD);
+    text(TR("ошибка сканирования", "scan failed"), 12, 74, C_RED, F_MD);
     text("B — повторить, удерж. B — назад", 12, 214, C_DIM, F_SM);
     return;
   }
   if (netCount == 0) {
-    text("сети не найдены", 12, 74, C_DIM, F_MD);
+    text(TR("сети не найдены", "no networks found"), 12, 74, C_DIM, F_MD);
     text("B — повторить, удерж. B — назад", 12, 214, C_DIM, F_SM);
     return;
   }
@@ -1171,10 +1185,10 @@ static void drawWifiScan() {
   }
 
   char b[32];
-  snprintf(b, sizeof(b), "сетей: %d", netCount);
+  snprintf(b, sizeof(b), TR("сетей: %d", "networks: %d"), netCount);
   text(b, 12, 218, C_DIM, F_SM);
-  text("B выбрать", 90, 218, C_DIM, F_SM);
-  text("держ. B назад", 198, 218, C_DIM, F_SM);
+  text(TR("B выбрать", "B select"), 90, 218, C_DIM, F_SM);
+  text(TR("держ. B назад", "hold B back"), 198, 218, C_DIM, F_SM);
 }
 
 static void startWifiScan();
@@ -1195,7 +1209,7 @@ static void updateWifiScanDyn() {
       L->fillRect(272, 38, 44, 34, C_BG);
       L->fillRect(8, 66, 210, 24, C_BG);
       drawSpinner(298, 52, 10, C_ACCENT);
-      text("поиск сетей...", 12, 70, C_ACCENT, F_MD);
+      text(TR("поиск сетей...", "scanning..."), 12, 70, C_ACCENT, F_MD);
     }
   }
 }
@@ -1237,7 +1251,7 @@ static void drawPassword() {
   String shown;
   if (passInput.length() == 0) {
     L->setTextColor(C_LINE);
-    L->drawString("введите пароль", 26, 56);
+    L->drawString(TR("введите пароль", "enter password"), 26, 56);
   } else {
     bool recent = (millis() - lastCharAt) < 900;
     for (int i = 0; i < (int)passInput.length(); ++i) {
@@ -1283,11 +1297,11 @@ static void drawPassword() {
     text(labels[i], x + 36, y + 4, sel ? C_BG : C_TEXT, F_SM, textdatum_t::top_center);
   }
 
-  text("A/C выбор", 12, 207, C_DIM, F_SM);
-  text("держ. A/C ряд", 110, 207, C_DIM, F_SM);
-  text("B ввод", 240, 207, C_DIM, F_SM);
-  text("держ. B стереть", 12, 223, C_DIM, F_SM);
-  text("OK подключить", 175, 223, C_DIM, F_SM);
+  text(TR("A/C выбор", "A/C move"), 12, 207, C_DIM, F_SM);
+  text(TR("держ. A/C ряд", "hold A/C row"), 110, 207, C_DIM, F_SM);
+  text(TR("B ввод", "B type"), 240, 207, C_DIM, F_SM);
+  text(TR("держ. B стереть", "hold B del"), 12, 223, C_DIM, F_SM);
+  text(TR("OK подключить", "OK connect"), 175, 223, C_DIM, F_SM);
 }
 
 // -----------------------------------------------------------------------------
@@ -1315,21 +1329,21 @@ static void drawConnecting() {
 
   if (connResult == 0) {
     drawSpinner(160, 96, 24, C_ACCENT);
-    text("ПОДКЛЮЧЕНИЕ", 160, 128, C_TEXT, F_LG, textdatum_t::top_center);
+    text(TR("ПОДКЛЮЧЕНИЕ", "CONNECTING"), 160, 128, C_TEXT, F_LG, textdatum_t::top_center);
     String s = fitText(connSsid.c_str(), 280, F_MD);
     text(s.c_str(), 160, 164, C_ACCENT, F_MD, textdatum_t::top_center);
     int dots = (millis() / 400) % 4;
     char d[5] = "....";
     d[dots] = 0;
     text(d, 160, 192, C_DIM, F_MD, textdatum_t::top_center);
-    text("удерж. B — отмена", 160, 222, C_DIM, F_SM, textdatum_t::top_center);
+    text(TR("удерж. B — отмена", "hold B — cancel"), 160, 222, C_DIM, F_SM, textdatum_t::top_center);
   } else {
     L->fillCircle(160, 84, 24, C_PANEL2);
     text("!", 160, 66, C_RED, F_XL, textdatum_t::top_center);
-    text("НЕ УДАЛОСЬ", 160, 122, C_RED, F_LG, textdatum_t::top_center);
-    text("проверьте пароль и сеть", 160, 160, C_DIM, F_SM, textdatum_t::top_center);
-    text("B — повторить", 160, 188, C_DIM, F_SM, textdatum_t::top_center);
-    text("удерж. B — к списку сетей", 160, 204, C_DIM, F_SM, textdatum_t::top_center);
+    text(TR("НЕ УДАЛОСЬ", "FAILED"), 160, 122, C_RED, F_LG, textdatum_t::top_center);
+    text(TR("проверьте пароль и сеть", "check password & network"), 160, 160, C_DIM, F_SM, textdatum_t::top_center);
+    text(TR("B — повторить", "B — retry"), 160, 188, C_DIM, F_SM, textdatum_t::top_center);
+    text(TR("удерж. B — к списку", "hold B — to list"), 160, 204, C_DIM, F_SM, textdatum_t::top_center);
   }
 }
 
@@ -1492,6 +1506,20 @@ static void serialTick() {
           radio::setMode(2, volume);
           if (wantPlaying) radio::play(stationSel);
         }
+        else if (!strcasecmp(cmd, "LANG")) {
+          currentLang = (currentLang == LANG_RU) ? LANG_EN : LANG_RU;
+          prefs.putInt("lang", currentLang);
+          needFullDraw = true;
+          Serial.printf("LANG is now %s\n", currentLang == LANG_EN ? "EN" : "RU");
+        }
+        else if (!strcasecmp(cmd, "LANG RU")) {
+          currentLang = LANG_RU; prefs.putInt("lang", 0); needFullDraw = true;
+          Serial.println("LANG RU");
+        }
+        else if (!strcasecmp(cmd, "LANG EN")) {
+          currentLang = LANG_EN; prefs.putInt("lang", 1); needFullDraw = true;
+          Serial.println("LANG EN");
+        }
         else if (!strcasecmp(cmd, "INFO")) {
           Serial.printf("INFO screen=%d radio=%d station=%d wifi=%d out=%s heap=%u\n",
                         (int)screen, (int)radio::state(), stationSel,
@@ -1629,8 +1657,13 @@ static void handleMenu(Press a, Press b, Press c) {
       needFullDraw = true;
       break;
     case 1: outSel = outMode; screen = Screen::Output; needFullDraw = true; break;
-    case 2: startWifiScan(); break;
-    case 3: screen = Screen::Info; needFullDraw = true; break;
+    case 2:
+      currentLang = (currentLang == LANG_RU) ? LANG_EN : LANG_RU;
+      prefs.putInt("lang", currentLang);
+      needFullDraw = true;
+      break;
+    case 3: startWifiScan(); break;
+    case 4: screen = Screen::Info; needFullDraw = true; break;
     default: goPlayer(); break;
   }
 }

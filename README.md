@@ -24,6 +24,7 @@ Everything is controlled using just the **three front buttons (A, B, C)** — in
 
 ## Features
 
+- **Multi-Language Support (Russian & English):** Switch the entire UI language at runtime via the main menu or serial CLI (`LANG RU` / `LANG EN`). Your preference is automatically saved in NVS across reboots.
 - **14 Preconfigured Streams:** A curated mix of international and Russian streams across genres (Rock, Indie, Jazz, Classical, Pop, News):
   - *International:* Radio Paradise, FIP (France), KEXP (Seattle), 181.FM Beatles, Classic FM (UK).
   - *Domestic:* Europa Plus, Retro FM, DFM, Nashe Radio, Monte Carlo, Russkoye Radio, Radio Mayak, Vesti FM, Jazz FM.
@@ -84,6 +85,8 @@ Connect via terminal at **115200 baud, 8N1** (line ending `\n`):
 | `ST <0..13>` | Jump directly to station index |
 | `OUT DAC` | Switch to built-in DAC speaker |
 | `OUT I2S` | Switch to external I2S DAC output |
+| `LANG` | Toggle between English and Russian |
+| `LANG RU` / `LANG EN` | Set UI language directly |
 | `INFO` | Print current screen, playback state, Wi-Fi status, output mode, and free heap |
 | `SHOT` | Dumps current display buffer in RGB332 format (320×240 bytes) |
 | `HELP` | Print command cheat sheet |
