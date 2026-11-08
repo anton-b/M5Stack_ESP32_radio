@@ -1,3 +1,7 @@
+#ifndef HAS_BLUETOOTH
+#define HAS_BLUETOOTH 0
+#endif
+
 // =============================================================================
 //  M5Stack Basic / Core — интернет-радио с управлением на 3 кнопках
 // =============================================================================
@@ -28,6 +32,10 @@
 #include <AudioFileSourceBuffer.h>
 #include <AudioGeneratorMP3.h>
 #include <AudioOutputI2S.h>
+#if HAS_BLUETOOTH
+#include "AudioOutputBT.h"
+#include <BluetoothA2DPSource.h>
+#endif
 #include "fonts/font8.h"
 #include "fonts/font11.h"
 #include "fonts/font16b.h"
@@ -136,13 +144,16 @@ namespace radio {
 enum State : uint8_t { Stopped = 0, Buffering = 1, Playing = 2, Failed = 3 };
 
 // 16 КБ буфера потока — экономит 16 КБ RAM для Bluetooth A2DP
-static const size_t STREAM_BUF = 32 * 1024;
+static const size_t STREAM_BUF = 16 * 1024;
 static const size_t CODEC_BUF  = 29192;       // максимум памяти MP3-декодера
 
 static AudioOutputM5Speaker outM5(&M5.Speaker, 0);
 static AudioOutputI2S        outI2S;
+#if HAS_BLUETOOTH
+static AudioOutputBT         outBT;
+#endif
 static AudioOutput*          outp = &outM5;
-static int                   _mode = 0;   // 0 встроенный, 2 I2S
+static int                   _mode = 0;   // 0 встроенный, 1 Bluetooth, 2 I2S
 
 static AudioGeneratorMP3*        decoder = nullptr;
 static AudioFileSourceICYStream* file    = nullptr;
@@ -351,7 +362,11 @@ static void task(void*) {
 
 void begin() {
   if (!streamBuf) {
-    streamBuf = (uint8_t*)malloc(STREAM_BUF);
+    size_t sz = STREAM_BUF;
+#if HAS_BLUETOOTH
+    if (ESP.getPsramSize() > 0) sz = 128 * 1024;
+#endif
+    streamBuf = (uint8_t*)malloc(sz);
     if (!streamBuf) { LOGL("[radio] no memory for stream buffer"); }
   }
   outM5.setup();
@@ -362,25 +377,56 @@ void begin() {
 // Режимы вывода: 0 встроенный динамик, 1 Bluetooth, 2 внешний I2S DAC.
 void setMode(int mode, int vol) {
   stopAll();
+#if HAS_BLUETOOTH
+  if (mode == 1) {
+    M5.Speaker.end();
+    outBT.setVolume(vol);
+    outp = &outBT;
+    _mode = 1;
+    LOGF("[radio] output mode Bluetooth\n");
+    return;
+  }
+#endif
   if (mode == 2) {
     M5.Speaker.end();
     outI2S.SetPinout(12, 0, 2);   // BCK, LRC, DIN (как у M5Stack Module Audio)
     outI2S.SetOutputModeMono(true);
     outI2S.SetGain(vol / 255.0f);
     outp = &outI2S;
+    _mode = 2;
   } else {
     outI2S.stop();
     M5.Speaker.begin();
     M5.Speaker.setVolume(vol);
     outp = &outM5;
+    _mode = 0;
   }
-  _mode = (mode == 2) ? 2 : 0;
+#if HAS_BLUETOOTH
+  // Если возвращаемся из Bluetooth на плате без PSRAM, восстанавливаем Wi-Fi
+  if (ESP.getPsramSize() == 0 && mode != 1) {
+    if (WiFi.getMode() == WIFI_OFF && wifiSsid.length()) {
+      WiFi.mode(WIFI_STA);
+      WiFi.setSleep(true);
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    }
+  }
+#endif
   LOGF("[radio] output mode %d\n", _mode);
 }
 
 int mode() { return _mode; }
 
+#if HAS_BLUETOOTH
+void btSetVolume(int vol);
+#endif
+
 void setVolume(int vol) {
+#if HAS_BLUETOOTH
+  if (outp == &outBT) {
+    outBT.setVolume(vol);
+    btSetVolume(vol);
+  } else
+#endif
   if (outp == &outI2S) outI2S.SetGain(vol / 255.0f);
   else M5.Speaker.setVolume(vol);
 }
@@ -421,6 +467,164 @@ void getTitle(char* out, size_t n) {
 // -----------------------------------------------------------------------------
 //  Настройки
 // -----------------------------------------------------------------------------
+#if HAS_BLUETOOTH
+static BluetoothA2DPSource a2dp;
+
+namespace radio {
+void btSetVolume(int vol) {
+  if (a2dp.is_connected()) a2dp.set_volume(vol * 127 / 255);
+}
+}
+
+static bool     btInited    = false;
+static int      btState     = 0;   // 0 выкл, 1 поиск, 2 подключение, 3 подключено, 4 ошибка
+static uint32_t btConnStart = 0;
+
+struct BtDev { char name[32]; esp_bd_addr_t addr; int rssi; };
+static const int BT_MAX = 12;
+static BtDev btDevs[BT_MAX];
+static int   btDevCount = 0;
+static int   btDevSel   = 0;
+
+static char btMac[18]  = "";
+static char btName[32] = "";
+
+static volatile float btSineFreq = 440.0f;
+
+static int32_t btGetData(uint8_t* data, int32_t len) {
+  if (ESP.getPsramSize() > 0) {
+    // На платах с PSRAM (Core2, Fire) стримим интернет-радио
+    return radio::outBT.read(data, len);
+  } else {
+    // На M5Stack Basic (без PSRAM) генерируем стерео синусоиду
+    int16_t* samples = (int16_t*)data;
+    size_t count = len / 4;
+    static float phase = 0.0f;
+    float step = 2.0f * 3.14159265f * btSineFreq / 44100.0f;
+    float amp = (volume / 255.0f) * 14000.0f;
+    for (size_t i = 0; i < count; ++i) {
+      int16_t v = (int16_t)(sinf(phase) * amp);
+      samples[i * 2]     = v;
+      samples[i * 2 + 1] = v;
+      phase += step;
+      if (phase >= 2.0f * 3.14159265f) phase -= 2.0f * 3.14159265f;
+    }
+    return len;
+  }
+}
+
+static bool btSsidCb(const char* ssid, esp_bd_addr_t addr, int rssi) {
+  if (!ssid || !ssid[0]) return false;
+  for (int i = 0; i < btDevCount; ++i) {
+    if (!memcmp(btDevs[i].addr, addr, 6)) {
+      if (rssi > btDevs[i].rssi) btDevs[i].rssi = rssi;
+      return false;
+    }
+  }
+  if (btDevCount >= BT_MAX) return false;
+  BtDev& d = btDevs[btDevCount++];
+  strncpy(d.name, ssid, sizeof(d.name) - 1);
+  d.name[sizeof(d.name) - 1] = 0;
+  memcpy(d.addr, addr, 6);
+  d.rssi = rssi;
+  LOGF("[bt] found %s rssi=%d\n", d.name, rssi);
+  return false;
+}
+
+static void btDiscMode(esp_bt_gap_discovery_state_t m) {
+  if (m == ESP_BT_GAP_DISCOVERY_STOPPED && btState == 1) {
+    btState = 0;
+    needFullDraw = true;
+  }
+}
+
+static void btInit() {
+  if (btInited) return;
+  WiFi.setSleep(true); // необходимо для coex
+  a2dp.set_local_name("M5 Radio");
+  a2dp.set_data_callback(btGetData);
+  a2dp.set_ssp_enabled(true);
+  a2dp.set_ssid_callback(btSsidCb);
+  a2dp.set_discovery_mode_callback(btDiscMode);
+  a2dp.start();
+  btInited = true;
+  btState = 1;
+  LOGF("[bt] started, heap=%u psram=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
+}
+
+static void btStartScan() {
+  radio::stop();
+  // Выключаем Wi-Fi, чтобы освободить ~80 КБ heap для Bluedroid на платах без PSRAM!
+  if (ESP.getPsramSize() == 0) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(50);
+  }
+  btInit();
+  btDevCount = 0;
+  btDevSel = 0;
+  btState = 1;
+  esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 10, 0);
+  LOGF("[bt] scan start\n");
+}
+
+static void btMacToAddr(const char* s, esp_bd_addr_t a) {
+  unsigned v[6];
+  sscanf(s, "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]);
+  for (int i = 0; i < 6; ++i) a[i] = (uint8_t)v[i];
+}
+
+static void btConnectSaved() {
+  if (!btMac[0]) return;
+  btInit();
+  esp_bd_addr_t addr;
+  btMacToAddr(btMac, addr);
+  a2dp.cancel_discovery();
+  a2dp.connect_to(addr);
+  btConnStart = millis();
+  btState = 2;
+  LOGF("[bt] connect saved %s\n", btMac);
+}
+
+static void btConnectIndex(int i) {
+  if (i < 0 || i >= btDevCount) return;
+  a2dp.cancel_discovery();
+  a2dp.connect_to(btDevs[i].addr);
+  snprintf(btMac, sizeof(btMac), "%02X:%02X:%02X:%02X:%02X:%02X",
+           btDevs[i].addr[0], btDevs[i].addr[1], btDevs[i].addr[2],
+           btDevs[i].addr[3], btDevs[i].addr[4], btDevs[i].addr[5]);
+  strncpy(btName, btDevs[i].name, sizeof(btName) - 1);
+  btName[sizeof(btName) - 1] = 0;
+  prefs.putString("btmac", btMac);
+  prefs.putString("btname", btName);
+  btConnStart = millis();
+  btState = 2;
+  LOGF("[bt] connecting to %s\n", btMac);
+}
+
+static void btPoll() {
+  if (!btInited) return;
+  static bool wasConnected = false;
+  bool connected = a2dp.is_connected();
+  if (connected && !wasConnected) {
+    btState = 3;
+    needFullDraw = true;
+    LOGF("[bt] connected: %s\n", btName);
+  }
+  if (!connected && wasConnected) {
+    btState = 0;
+    needFullDraw = true;
+    LOGF("[bt] disconnected\n");
+  }
+  wasConnected = connected;
+  if (btState == 2 && millis() - btConnStart > 20000) {
+    btState = 4;
+    needFullDraw = true;
+    LOGF("[bt] connect timeout\n");
+  }
+}
+#endif
+
 static void loadPrefs() {
   prefs.begin("m5radio", false);
   wifiSsid   = prefs.getString("ssid", "");
@@ -765,6 +969,55 @@ static void drawBluetooth() {
   drawTopBar();
   text("BLUETOOTH", 12, 32, C_TEXT, F_LG);
 
+#if HAS_BLUETOOTH
+  {
+    const char* st;
+    uint16_t stc = C_DIM;
+    if (btState == 3) { st = "подключено"; stc = C_GREEN; }
+    else if (btState == 2) { st = "подключение..."; stc = C_ACCENT; }
+    else if (btState == 1) { st = "поиск устройств..."; stc = C_ACCENT; }
+    else if (btState == 4) { st = "ошибка подключения"; stc = C_RED; }
+    else st = "не подключено";
+    text(st, 12, 64, stc, F_MD);
+    if (btName[0]) {
+      String n = fitText(btName, 140, F_SM);
+      text(n.c_str(), 308, 68, C_DIM, F_SM, textdatum_t::top_right);
+    }
+
+    const int rows = btDevCount + 1;
+    const int y0 = 92, rowH = 26, vis = 4;
+    int top = btDevSel - 2;
+    if (top < 0) top = 0;
+    if (top > rows - vis) top = rows - vis;
+    if (top < 0) top = 0;
+
+    for (int r = 0; r < vis; ++r) {
+      int i = top + r;
+      if (i >= rows) break;
+      int y = y0 + r * rowH;
+      bool sel = (i == btDevSel);
+      if (sel) {
+        L->fillRoundRect(8, y, 304, rowH - 3, 6, C_PANEL2);
+        L->fillRoundRect(8, y, 4, rowH - 3, 2, C_ACCENT);
+      }
+      if (i == btDevCount) {
+        text("Поиск устройств заново", 22, y + 4, sel ? C_ACCENT : C_DIM, F_MD);
+      } else {
+        String name = fitText(btDevs[i].name, 200, F_MD);
+        text(name.c_str(), 22, y + 4, sel ? C_TEXT : C_DIM, F_MD);
+        char b[16];
+        snprintf(b, sizeof(b), "%d", btDevs[i].rssi);
+        text(b, 306, y + 6, sel ? C_ACCENT : C_LINE, F_SM, textdatum_t::top_right);
+      }
+    }
+
+    text("A/C выбор", 12, 218, C_DIM, F_SM);
+    text("B выбрать", 108, 218, C_DIM, F_SM);
+    text("держ. B назад", 195, 218, C_DIM, F_SM);
+    return;
+  }
+#endif
+
   text("Недоступно на этой плате", 12, 64, C_RED, F_MD);
   text("Для работы Wi-Fi и Bluetooth", 12, 90, C_DIM, F_SM);
   text("нужен ESP32 с PSRAM (Core2/Fire).", 12, 106, C_DIM, F_SM);
@@ -1049,7 +1302,7 @@ static void startConnect(const String& ssid, const String& pass) {
   radio::stop();
   WiFi.disconnect();
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFi.setSleep(true); // необходимо для устойчивого coex Wi-Fi + BT
   WiFi.begin(connSsid.c_str(), connPass.c_str());
   LOGF("[wifi] connecting to %s\n", connSsid.c_str());
   screen = Screen::WifiConnecting;
@@ -1205,11 +1458,35 @@ static void serialTick() {
           volume = v; applyVolume(); saveVolume(); drawTopBar();
         }
         else if (!strcasecmp(cmd, "SHOT")) takeShot();
-        else if (!strcasecmp(cmd, "OUT DAC")) {
+                else if (!strcasecmp(cmd, "OUT DAC")) {
           outMode = 0; prefs.putInt("out", 0);
           radio::setMode(0, volume);
           if (wantPlaying) radio::play(stationSel);
         }
+#if HAS_BLUETOOTH
+        else if (!strcasecmp(cmd, "OUT BT")) {
+          outMode = 1; prefs.putInt("out", 1);
+          radio::setMode(1, volume);
+          btConnectSaved();
+          if (wantPlaying) radio::play(stationSel);
+        }
+        else if (!strcasecmp(cmd, "BTSCAN")) {
+          btStartScan();
+          screen = Screen::Bluetooth; needFullDraw = true;
+        }
+        else if (!strcasecmp(cmd, "BTLIST")) {
+          Serial.printf("BT devices (%d):\n", btDevCount);
+          for (int i = 0; i < btDevCount; ++i)
+            Serial.printf("  [%d] %s (%d dBm)\n", i, btDevs[i].name, btDevs[i].rssi);
+        }
+        else if (!strncasecmp(cmd, "BTCON ", 6)) {
+          int i = atoi(cmd + 6);
+          btConnectIndex(i);
+          outMode = 1; prefs.putInt("out", 1);
+          radio::setMode(1, volume);
+          goPlayer();
+        }
+#endif
         else if (!strcasecmp(cmd, "OUT I2S")) {
           outMode = 2; prefs.putInt("out", 2);
           radio::setMode(2, volume);
@@ -1307,6 +1584,9 @@ static void volumeRepeatTick() {
 
 static void handleSplash() {
   if (millis() - splashStart > 1800) {
+#if HAS_BLUETOOTH
+    if (outMode == 1 && btMac[0]) btConnectSaved();
+#endif
     if (wifiSsid.length()) startConnect(wifiSsid, wifiPass);
     else startWifiScan();
   }
@@ -1356,6 +1636,26 @@ static void handleMenu(Press a, Press b, Press c) {
 }
 
 static void handleBluetooth(Press a, Press b, Press c) {
+#if HAS_BLUETOOTH
+  {
+    int rows = btDevCount + 1;
+    if (a.click) { btDevSel = (btDevSel + rows - 1) % rows; needFullDraw = true; }
+    if (c.click) { btDevSel = (btDevSel + 1) % rows; needFullDraw = true; }
+    if (b.hold) { screen = Screen::Output; needFullDraw = true; return; }
+    if (!b.click) return;
+    if (btDevSel == btDevCount) {
+      btStartScan();
+      needFullDraw = true;
+    } else {
+      btConnectIndex(btDevSel);
+      outMode = 1;
+      prefs.putInt("out", 1);
+      radio::setMode(1, volume);
+      goPlayer();
+    }
+    return;
+  }
+#endif
   (void)a; (void)c;
   if (b.click || b.hold) { screen = Screen::Output; needFullDraw = true; }
 }
@@ -1369,6 +1669,9 @@ static void handleOutput(Press a, Press b, Press c) {
     outMode = 0; prefs.putInt("out", 0); radio::setMode(0, volume); goPlayer();
   } else if (outSel == 1) {
     screen = Screen::Bluetooth;
+#if HAS_BLUETOOTH
+    if (!btInited || (!btDevCount && !a2dp.is_connected())) btStartScan();
+#endif
     needFullDraw = true;
   } else if (outSel == 2) {
     outMode = 2; prefs.putInt("out", 2); radio::setMode(2, volume); goPlayer();
@@ -1480,6 +1783,7 @@ static void wifiTick() {
   // авто-переподключение
   static uint32_t lastRetry = 0;
   if (wifiSsid.length() && WiFi.status() != WL_CONNECTED &&
+      outMode != 1 && screen != Screen::Bluetooth &&
       screen != Screen::WifiConnecting && screen != Screen::WifiScan &&
       screen != Screen::Password && !scanning &&
       millis() - lastRetry > 15000) {
@@ -1557,7 +1861,7 @@ void setup() {
   M5.BtnC.setHoldThresh(550);
 
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFi.setSleep(true); // coex
   WiFi.disconnect();
 
   radio::begin();
@@ -1592,6 +1896,9 @@ void loop() {
   }
 
   wifiTick();
+#if HAS_BLUETOOTH
+  btPoll();
+#endif
 
   if (screen == Screen::WifiScan) updateWifiScanDyn();
 

@@ -12,8 +12,8 @@
 
 class AudioOutputBT : public AudioOutput {
 public:
-  // ~45 мс стерео-потока 44100 Гц (экономит 8 КБ RAM)
-  static constexpr size_t RING = 8192;
+  // ~23 мс стерео-потока 44100 Гц (экономит RAM под Wi-Fi + BT)
+  static constexpr size_t RING = 4096;
 
   AudioOutputBT() { hertz = 44100; }
 

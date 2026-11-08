@@ -36,9 +36,10 @@ Everything is controlled using just the **three front buttons (A, B, C)** — in
   - Top status bar with live Wi-Fi signal (RSSI bars), volume percentage, and speaker status.
   - Custom Cyrillic and Latin DejaVu fonts embedded directly in Flash (`PROGMEM`).
   - Automatic CP1251 to UTF-8 transcoding for domestic radio metadata.
-- **Dual Audio Output Options:**
+- **Dual / Triple Audio Output Options:**
   - *Internal DAC:* Outputs through ESP32 DAC (GPIO 25) to the built-in speaker.
   - *External I2S DAC:* Outputs 24/32-bit pristine digital audio via bottom header (`G12`, `G0`, `G2`) to modules like **MAX98357A** or **PCM5102A**.
+  - *Bluetooth A2DP Source:* Wireless streaming to standard Bluetooth headphones / speakers. On boards with PSRAM (Core2/Fire), streams the online radio stream. On Basic (no PSRAM), generates an audio tone / sine wave without needing Wi-Fi.
 - **Non-Volatile Storage (NVS):** Automatically remembers chosen Wi-Fi network, password, last selected station, volume, and audio output mode across reboots.
 - **Interactive Serial CLI:** Complete control and headless test suite via USB UART (synthetic button presses, volume, station jump, screenshot dumps).
 
